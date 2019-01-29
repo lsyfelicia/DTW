@@ -1,0 +1,172 @@
+import os
+import pandas as pd
+import numpy as np
+from pandas import DataFrame,Series
+import matplotlib.pyplot as plt
+from dtw import dtw
+from sklearn.metrics.pairwise import euclidean_distances
+import time
+from numpy import inf
+
+
+class DTW_data(object):
+    #Store data
+    def __init__(self):
+        self.sec_price = []  # used to store price information
+        self.sec_feature = []  # used to store factor information
+        self.sec_tag = []  # used to store sector's name
+        self.factor_tag = []  # used to store factor'name
+        self.initial_data = {}
+        self.pure_data = np.array([0])  # used to store whole price and factor infroamtoin
+        self.start_index = -1
+        self.date = []
+        self.inner_code = []
+
+        self.trade_times = [1, 2, 4, 8, 16]
+        self.time_gaps = [1, 3, 5]
+        self.alpha_list = [index * index / 20.0 for index in range(1, 101)]
+
+        self.time_list = []
+
+        self.process_matrix = np.array([0])
+        self.factor_index = -1
+
+        self.edition = 'factor_4d' + '_'
+        # used to point opposite direction factors.
+        # so when calculating alpha , those factors only have significance when we do the negation to them
+        self.reverse_factor_list = []
+
+    def data_retrieve(self):
+        rootDir = 'Data/05_industry_price_weekly/'
+        paths = []
+        for file_name in os.listdir(rootDir):
+            paths.append(os.path.join(rootDir, file_name))
+        paths.sort()
+        
+        drop_list = ['index', 'InnerCode', 'TradingDay', 'ChiName']  # information that don't need to be stored in array
+        time_drop = [i for i in range(59)] + [i for i in range(2933, 2969)]  # Time from 4/5/2005 - 1/25/2017
+        csv_price = pd.DataFrame()
+        self.sec_price = []
+        self.factor_tag = []
+        
+        for path in paths:
+            csv_price = pd.read_csv(path, encoding='gbk')
+            csv_price = csv_price.drop(time_drop, axis=0).reset_index()
+            self.time_list = csv_price['TradingDay']
+            self.sec_tag.append(list(csv_price['ChiName'])[0][5:])
+            self.inner_code.append(list(csv_price['InnerCode'])[0])
+            csv_price = csv_price.drop(drop_list, axis=1)
+            self.sec_price.append(np.array(csv_price))
+        self.sec_price = np.array(self.sec_price)
+        price_temp = list(csv_price.columns)
+        self.factor_tag = self.factor_tag + price_temp
+        self.time_list = list(self.time_list)
+        for time in range(len(self.time_list)):
+            self.time_list[time] = self.time_list[time].split(' ')[0]
+
+#DTW Algorithm
+def dist(aa,bb):
+    return abs(aa-bb)
+def trans(a):
+    l=[]
+    for i in range(1,len(a)+1):
+        l.append(a[-i])
+    return l
+
+def dtw(t,r):
+    n=len(t)
+    m=len(r)
+    d=np.zeros((n,m))
+    t=trans(t)
+    r=trans(r)
+    for i in range(n):
+        for j in range(m):
+            d[i][j]=dist(t[i],r[j])
+    realmax=100000000000
+    D=np.ones((n,m))*realmax
+    #print(D)
+    D[0][0]=d[0][0]
+    for i in range(1,n):
+        for j in range(0,m):
+            D1=D[i-1][j]
+            if j>0:
+                D2=D[i-1][j-1]
+            else:
+                D2=realmax
+            if j>1:
+                D3=D[i-1][j-2]
+            else:
+                D3=realmax
+            D[i][j]=d[i][j]+min(D1,D2,D3)
+            #print(D)
+    return D[n-1][m-1]
+    
+“””  
+def DTW(a,b):
+    m=len(a)
+    n=len(b)
+    dis=[]
+    for i in range(1,m):
+        dis.append(dtw(a[0:i],b))
+    for j in range(1,n):
+        dis.append(dtw(a,b[0:j]))
+    return min(dis)
+“””
+
+#Test Start
+test = DTW_data()
+test.sec_tag
+test.data_retrieve()
+
+#min-max normalization
+def normalized(price):
+    return (price - min(price)) / (max(price) - min(price))
+
+#Average 29 industries
+def get_average(a):
+     return sum(a) / 29
+    
+list_price_avg = []
+for i in range(0,2874):
+    price_temp = test.sec_price[:, i,test.factor_tag.index('ClosePrice')]
+    price_avg = get_average(price_temp)
+    list_price_avg.append(price_avg)
+avg_price = np.array([list_price_avg])
+price_avg_nor = (normalized(list_price_avg))
+#print(normalized(list_price_avg)) #array
+#print(avg_price) #list
+
+#def compare(a):
+new_list = []
+base = 50
+compare = base//2
+tl = test.time_list
+
+for i in range(0, 2874-base):
+    x = price_avg_nor[i: base+i]  
+    
+    for t in range(0,i-compare):
+        y = price_avg_nor[t: compare+t]
+        new_list.append([base, tl[i], compare, tl[t], dtw(x,y)])
+    new_data = new_list
+
+    for t in range(base+i, 2874-compare):
+        y = price_avg_nor[t: compare+t]
+        new_list.append([base, tl[i], compare, tl[t], dtw(x,y)])
+    new_data = new_list
+#print(new_data)
+
+
+xlist2=x
+ylist2=range(0,len(x))
+plt.plot(ylist2,xlist2)
+xlist2=y
+ylist2=range(0,len(y))
+plt.plot(ylist2,xlist2)
+#print ('DTW is', (dtw(x,y)))
+#plt.show()
+
+#pandas store csv
+store = pd.DataFrame(new_data)
+store = pd.DataFrame(new_data, columns=['base range', 'beginning of base time', 'compare range', 'beginning of compare time', 'DTW'])
+store.to_csv('base50days_5.csv')
